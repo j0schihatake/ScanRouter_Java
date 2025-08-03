@@ -2,39 +2,36 @@ package com.j0schi.ScanRouter.controller;
 
 import com.j0schi.ScanRouter.service.PortScannerService;
 import com.j0schi.ScanRouter.service.VulnerabilityCheckService;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.*;
 
-import java.util.List;
+import java.util.Map;
 
 @RestController
 @RequestMapping("/api/scan")
 public class ScanController {
-    @Autowired
-    private PortScannerService portScannerService;
-    @Autowired
-    private VulnerabilityCheckService vulnerabilityCheckService;
+    private final PortScannerService portScanner;
+    private final VulnerabilityCheckService vulnChecker;
 
-    @GetMapping("/tcp/{host}")
-    public List<Integer> scanTcpPorts(
-            @PathVariable String host,
-            @RequestParam(defaultValue = "1-1000") String portRange // Теперь принимаем строку диапазона
-    ) {
-        return portScannerService.scanTcpPorts(host, portRange); // Используем метод с диапазоном
+    public ScanController(PortScannerService portScanner,
+                          VulnerabilityCheckService vulnChecker) {
+        this.portScanner = portScanner;
+        this.vulnChecker = vulnChecker;
     }
 
-    @GetMapping("/nmap/{host}")
-    public List<Integer> scanWithNmap(
-            @PathVariable String host,
-            @RequestParam(defaultValue = "-T4 -p 1-1000") String args
-    ) {
-        //return portScannerService.scanWithNmap(host, args);
-        return null;
+    @GetMapping("/full/{host}")
+    public Map<String, Object> fullScan(@PathVariable String host) {
+        Map<String, Object> result = portScanner.fullScan(host);
+        result.put("vulnerabilities", vulnChecker.checkAll(host));
+        return result;
+    }
+
+    @GetMapping("/ports/{host}")
+    public Map<String, Object> scanPorts(@PathVariable String host) {
+        return portScanner.fullScan(host);
     }
 
     @GetMapping("/vuln/{host}")
-    public String checkVulnerabilities(@PathVariable String host) {
-        return vulnerabilityCheckService.checkSSH(host) + "\n" +
-                vulnerabilityCheckService.checkWebInterface(host);
+    public Map<String, String> checkVulnerabilities(@PathVariable String host) {
+        return vulnChecker.checkAll(host);
     }
 }

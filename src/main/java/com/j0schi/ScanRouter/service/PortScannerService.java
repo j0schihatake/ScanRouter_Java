@@ -1,53 +1,75 @@
 package com.j0schi.ScanRouter.service;
 
-import lombok.extern.slf4j.Slf4j;
+import com.j0schi.ScanRouter.config.ScanRouterConfig;
+import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
-import java.io.*;
-import java.net.*;
-import java.util.*;
+
+import java.io.BufferedReader;
+import java.io.IOException;
+import java.io.InputStreamReader;
+import java.net.InetSocketAddress;
+import java.net.Socket;
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.List;
+import java.util.Map;
 import java.util.concurrent.*;
+import java.util.stream.Collectors;
+import java.util.stream.IntStream;
+import java.util.stream.Stream;
 
-@Slf4j
 @Service
+@RequiredArgsConstructor
 public class PortScannerService {
-    private static final int TCP_TIMEOUT = 2000; // Увеличили таймаут до 2 секунд
-    private static final int THREADS = 50; // Уменьшили потоки для стабильности
+    private final ScanRouterConfig config;
+    private static final int SCAN_TIMEOUT_MS = 300;
+    private static final int THREAD_POOL_SIZE = 200;
 
-    public List<Integer> scanTcpPorts(String host, String portRange) {
-        // Добавим проверку доступности хоста
-        if (!isHostReachable(host)) {
-            throw new RuntimeException("Хост " + host + " недоступен!");
+    public Map<String, Object> fullScan(String host) {
+        Map<String, Object> result = new ConcurrentHashMap<>();
+        ExecutorService executor = Executors.newFixedThreadPool(3);
+
+        executor.execute(() -> result.put("quick-scan", quickScan(host)));
+        executor.execute(() -> result.put("full-scan", fullPortScan(host)));
+        executor.execute(() -> {
+            try {
+                result.put("nmap-scan", nmapScan(host));
+            } catch (Exception e) {
+                result.put("nmap-error", "Nmap not available: " + e.getMessage());
+            }
+        });
+
+        executor.shutdown();
+        try {
+            executor.awaitTermination(2, TimeUnit.MINUTES);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
         }
-
-        String[] parts = portRange.split("-");
-        int startPort = Integer.parseInt(parts[0]);
-        int endPort = Integer.parseInt(parts[1]);
-
-        return scanPortsWithRetry(host, startPort, endPort, 2); // 2 попытки
+        return result;
     }
 
-    private List<Integer> scanPortsWithRetry(String host, int startPort, int endPort, int retries) {
-        List<Integer> openPorts = new ArrayList<>();
-        for (int i = 0; i < retries; i++) {
-            openPorts = doScan(host, startPort, endPort);
-            if (!openPorts.isEmpty()) break;
-            try { Thread.sleep(1000); } catch (InterruptedException e) { break; }
-        }
-        return openPorts;
+    public List<Integer> quickScan(String host) {
+        return scanPortRange(host, config.getTarget().getScan().getQuickPorts());
     }
 
-    private List<Integer> doScan(String host, int startPort, int endPort) {
-        List<Integer> openPorts = Collections.synchronizedList(new ArrayList<>());
-        ExecutorService executor = Executors.newFixedThreadPool(THREADS);
+    public List<Integer> fullPortScan(String host) {
+        return scanPortRange(host, config.getTarget().getScan().getFullPorts());
+    }
 
-        for (int port = startPort; port <= endPort; port++) {
-            final int currentPort = port;
-            executor.submit(() -> {
-                if (isPortOpen(host, currentPort)) {
-                    openPorts.add(currentPort);
-                }
-            });
+    private List<Integer> scanPortRange(String host, String portRange) {
+        List<Integer> ports = parsePorts(portRange);
+        if (ports == null || ports.isEmpty()) {
+            return Collections.emptyList();
         }
+
+        List<Integer> openPorts = new CopyOnWriteArrayList<>();
+        ExecutorService executor = Executors.newFixedThreadPool(THREAD_POOL_SIZE);
+
+        ports.forEach(port -> executor.execute(() -> {
+            if (isPortOpen(host, port)) {
+                openPorts.add(port);
+            }
+        }));
 
         executor.shutdown();
         try {
@@ -55,23 +77,62 @@ public class PortScannerService {
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
         }
-        return openPorts;
+
+        return openPorts.stream().sorted().collect(Collectors.toList());
     }
 
-    private boolean isHostReachable(String host) {
-        try {
-            return InetAddress.getByName(host).isReachable(3000);
+    List<Integer> parsePorts(String ports) {
+        if (ports == null || ports.trim().isEmpty()) {
+            return Collections.emptyList();
+        }
+
+        return Arrays.stream(ports.split(","))
+                .flatMap(part -> {
+                    String[] range = part.trim().split("-");
+                    if (range.length == 1) {
+                        try {
+                            return Stream.of(Integer.parseInt(range[0]));
+                        } catch (NumberFormatException e) {
+                            return Stream.empty();
+                        }
+                    }
+                    try {
+                        int start = Integer.parseInt(range[0]);
+                        int end = Integer.parseInt(range[1]);
+                        return IntStream.rangeClosed(start, end).boxed();
+                    } catch (NumberFormatException e) {
+                        return Stream.empty();
+                    }
+                })
+                .collect(Collectors.toList());
+    }
+
+    boolean isPortOpen(String host, int port) {
+        try (Socket socket = new Socket()) {
+            socket.connect(new InetSocketAddress(host, port), SCAN_TIMEOUT_MS);
+            return true;
         } catch (IOException e) {
             return false;
         }
     }
 
-    private boolean isPortOpen(String host, int port) {
-        try (Socket socket = new Socket()) {
-            socket.connect(new InetSocketAddress(host, port), TCP_TIMEOUT);
-            return true;
+    public List<Integer> nmapScan(String host) throws IOException {
+        try {
+            Process process = new ProcessBuilder()
+                    .command("nmap", "-T4", "-p-", "--open", host)
+                    .start();
+
+            try (BufferedReader reader = new BufferedReader(
+                    new InputStreamReader(process.getInputStream()))) {
+
+                return reader.lines()
+                        .filter(line -> line.matches("^\\d+/tcp\\s+open\\s+.*"))
+                        .map(line -> Integer.parseInt(line.split("/")[0]))
+                        .sorted()
+                        .collect(Collectors.toList());
+            }
         } catch (IOException e) {
-            return false;
+            throw new IOException("Nmap scan failed. Ensure nmap is installed and in PATH", e);
         }
     }
 }

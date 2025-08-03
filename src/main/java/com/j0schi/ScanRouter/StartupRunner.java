@@ -1,43 +1,48 @@
 package com.j0schi.ScanRouter;
 
-import com.j0schi.ScanRouter.config.ScanConfig;
 import com.j0schi.ScanRouter.service.PortScannerService;
 import com.j0schi.ScanRouter.service.VulnerabilityCheckService;
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.CommandLineRunner;
 import org.springframework.stereotype.Component;
 
+import java.util.Map;
+
 @Slf4j
 @Component
+@RequiredArgsConstructor
 public class StartupRunner implements CommandLineRunner {
 
-    private final ScanConfig scanConfig;
-    private final PortScannerService portScannerService;
-    private final VulnerabilityCheckService vulnerabilityCheckService;
+    private final PortScannerService portScanner;
+    private final VulnerabilityCheckService vulnChecker;
 
-    public StartupRunner(ScanConfig scanConfig, PortScannerService portScannerService,
-                         VulnerabilityCheckService vulnerabilityCheckService) {
-        this.scanConfig = scanConfig;
-        this.portScannerService = portScannerService;
-        this.vulnerabilityCheckService = vulnerabilityCheckService;
-    }
+    @Value("${scan-router.target.host}")
+    private String host;
+
+    @Value("${scan-router.target.auto-scan}")
+    private boolean autoScan;
 
     @Override
     public void run(String... args) {
-        if (scanConfig.isAutoScan()) {
-            log.info("🔄 Автоматическое сканирование {}...", scanConfig.getHost());
+        if (!autoScan) return;
 
-            // Используем метод scanTcpPorts с диапазоном портов
-            var openPorts = portScannerService.scanTcpPorts(
-                    scanConfig.getHost(),
-                    scanConfig.getTcpPorts() // Используем строку с диапазоном из конфига
-            );
-            log.info("🔓 Открытые TCP-порты: {}", openPorts);
+        log.info("🔍 Starting full scan for " + host);
+
+        try {
+            // Сканирование портов
+            Map<String, Object> scanResult = portScanner.fullScan(host);
+            log.info("🔹 Quick scan: " + scanResult.get("quick-scan"));
+            log.info("🔹 Full port scan: " + scanResult.get("full-scan"));
+            log.info("🔹 Nmap results: " + scanResult.get("nmap-scan"));
 
             // Проверка уязвимостей
-            String vulnReport = vulnerabilityCheckService.checkSSH(scanConfig.getHost()) + "\n" +
-                    vulnerabilityCheckService.checkWebInterface(scanConfig.getHost());
-            log.info("🛡️ Результаты проверки уязвимостей:\n{}", vulnReport);
+            Map<String, String> vulnResults = vulnChecker.checkAll(host);
+            vulnResults.forEach((k, v) -> log.info("🔸 " + k + ": " + v));
+
+        } catch (Exception e) {
+            log.error("❌ Scan failed: " + e.getMessage());
         }
     }
 }

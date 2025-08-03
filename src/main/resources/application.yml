@@ -7,12 +7,14 @@ spring:
 
 scan-router:
   target:
-    host: 192.168.1.1  # Дефолтный адрес роутера
-    auto-scan: true     # Автоматическое сканирование при старте
-    tcp-ports: "1-1000" # Диапазон TCP-портов для сканирования
-    nmap-args: "-T4 -p 1-1000" # Аргументы Nmap
-
-  logging:
-    level:
-      root: INFO
-      com.example.scanrouter: DEBUG
+    host: 192.168.1.1
+    auto-scan: true
+    scan:
+      quick-ports: "21-23,80,443,445,3389,8080,8443"
+      full-ports: "1-1024,3306,5432,8000-9000"
+      nmap-args: "-T4 --top-ports 1000"
+    vulnerabilities:
+      enabled: true
+      critical-ports: "22,23,80,443,7547"
+      ssh-timeout: 5000
+      web-timeout: 3000
