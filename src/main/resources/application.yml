@@ -1,0 +1,18 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: ScanRouter
+
+scan-router:
+  target:
+    host: 192.168.1.1  # Дефолтный адрес роутера
+    auto-scan: true     # Автоматическое сканирование при старте
+    tcp-ports: "1-1000" # Диапазон TCP-портов для сканирования
+    nmap-args: "-T4 -p 1-1000" # Аргументы Nmap
+
+  logging:
+    level:
+      root: INFO
+      com.example.scanrouter: DEBUG
