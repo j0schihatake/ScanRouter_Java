@@ -18,10 +18,9 @@ public class ScanController {
     @GetMapping("/tcp/{host}")
     public List<Integer> scanTcpPorts(
             @PathVariable String host,
-            @RequestParam(defaultValue = "1") int start,
-            @RequestParam(defaultValue = "1000") int end
+            @RequestParam(defaultValue = "1-1000") String portRange // Теперь принимаем строку диапазона
     ) {
-        return portScannerService.scanTcpPorts(host, start, end);
+        return portScannerService.scanTcpPorts(host, portRange); // Используем метод с диапазоном
     }
 
     @GetMapping("/nmap/{host}")
@@ -29,7 +28,8 @@ public class ScanController {
             @PathVariable String host,
             @RequestParam(defaultValue = "-T4 -p 1-1000") String args
     ) {
-        return portScannerService.scanWithNmap(host, args);
+        //return portScannerService.scanWithNmap(host, args);
+        return null;
     }
 
     @GetMapping("/vuln/{host}")
